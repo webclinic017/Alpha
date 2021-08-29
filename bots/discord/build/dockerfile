@@ -7,6 +7,7 @@ WORKDIR /usr/src/discord-bot
 COPY ./bots/discord/build/requirements.txt ./bots/discord/entrypoint.sh ./
 RUN pip install -r ./requirements.txt
 
+RUN mkdir ./dependencies
 COPY ./libraries/messages ./dependencies/messages
 RUN pip install ./dependencies/messages
 COPY ./libraries/database ./dependencies/database
@@ -17,6 +18,8 @@ COPY ./libraries/parser ./dependencies/parser
 RUN pip install ./dependencies/parser
 COPY ./libraries/requests ./dependencies/requests
 RUN pip install ./dependencies/requests
+COPY ./libraries/ichibotrelay ./dependencies/ichibotrelay
+RUN pip install ./dependencies/ichibotrelay
 
 # Copy source code
 COPY ./bots/discord/app ./app

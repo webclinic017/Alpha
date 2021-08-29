@@ -1,21 +1,23 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: satellite-development
   labels:
-    app: satellite
+    app: satellites
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: satellite
+      app: satellites
+  serviceName: "satellite"
+  podManagementPolicy: Parallel
   template:
     metadata:
       labels:
-        app: satellite
+        app: satellites
     spec:
       containers:
-      - name: satellite
+      - name: satellites
         image: alphabotsystem/alpha-satellites
         imagePullPolicy: IfNotPresent
         volumeMounts:

@@ -1,21 +1,23 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: satellite
+  name: satellites
   labels:
-    app: satellite
+    app: satellites
 spec:
-  replicas: 76
+  replicas: 89
   selector:
     matchLabels:
-      app: satellite
+      app: satellites
+  serviceName: "satellite"
+  podManagementPolicy: Parallel
   template:
     metadata:
       labels:
-        app: satellite
+        app: satellites
     spec:
       containers:
-      - name: satellite
+      - name: satellites
         image: gcr.io/nlc-bot-36685/alpha-satellites
         imagePullPolicy: Always
         env:
@@ -33,8 +35,8 @@ spec:
             readOnly: true
         resources:
           requests:
-            memory: "75Mi"
-            cpu: "2m"
+            memory: "60Mi"
+            cpu: "1m"
         ports:
           - containerPort: 6911
       volumes:
@@ -56,5 +58,3 @@ spec:
             items:
               - key: gcloud_credentials.json
                 path: key
-      nodeSelector:
-        cloud.google.com/gke-nodepool: medium-performance-pool

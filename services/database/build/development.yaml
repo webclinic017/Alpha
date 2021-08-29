@@ -1,5 +1,5 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: database-development
   labels:
@@ -9,6 +9,8 @@ spec:
   selector:
     matchLabels:
       app: database
+  serviceName: "database"
+  podManagementPolicy: Parallel
   template:
     metadata:
       labels:
@@ -25,6 +27,12 @@ spec:
         ports:
         - containerPort: 6900
       volumes:
+        - name: alpha-service-keys
+          secret:
+            secretName: alpha-service-keys
+            items:
+              - key: credentials
+                path: key
         - name: google-cloud-auth
           secret:
             secretName: google-cloud-auth

@@ -1,11 +1,10 @@
-import time
-import datetime
+from time import time
 
 
 class Utils(object):
 	@staticmethod
 	def seconds_until_cycle():
-		return (time.time() + 60) // 60 * 60 - time.time()
+		return (time() + 60) // 60 * 60 - time()
 
 	@staticmethod
 	def get_accepted_timeframes(t):

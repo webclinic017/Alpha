@@ -4,3 +4,4 @@ pycoingecko>=0.3.0
 iexfinance>=0.4.3
 pyzmq>=18.1.1
 markdownify>=0.6.5
+orjson>=3.6.0

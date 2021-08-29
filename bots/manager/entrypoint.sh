@@ -1,7 +1,7 @@
 source /run/secrets/alpha-service/key
 if [[ $PRODUCTION_MODE == "1" ]]
 then
-	python -u app/discord_manager.py
+	python app/discord_manager.py
 else
 	python -u app/discord_manager.py
 fi

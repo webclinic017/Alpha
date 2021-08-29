@@ -10,8 +10,6 @@ RUN pip install -r ./requirements.txt
 RUN mkdir ./dependencies
 COPY ./libraries/parser ./dependencies/parser
 RUN pip install ./dependencies/parser
-COPY ./libraries/requests ./dependencies/requests
-RUN pip install ./dependencies/requests
 
 # Copy source code
 COPY ./services/quotes/app ./app

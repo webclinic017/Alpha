@@ -1,78 +1,64 @@
-import os
-import zmq
-import zlib
-import pickle
+from os import environ
+from zmq.asyncio import Context, Poller
+from zmq import REQ, LINGER, POLLIN
+from orjson import loads
 from io import BytesIO
-
-from .ticker import Ticker
-from .exchange import Exchange
-from . import supported
 
 
 class TickerParser(object):
-	zmqContext = zmq.Context.instance()
+	zmqContext = Context.instance()
 
 	@staticmethod
-	def execute_parser_request(endpoint, parameters, timeout=5):
-		socket = TickerParser.zmqContext.socket(zmq.REQ)
-		payload, responseText = None, None
+	async def execute_parser_request(endpoint, parameters, timeout=5):
+		socket = TickerParser.zmqContext.socket(REQ)
 		socket.connect("tcp://parser:6900")
-		socket.setsockopt(zmq.LINGER, 0)
-		poller = zmq.Poller()
-		poller.register(socket, zmq.POLLIN)
+		socket.setsockopt(LINGER, 0)
+		poller = Poller()
+		poller.register(socket, POLLIN)
 
-		socket.send_multipart([endpoint, zlib.compress(pickle.dumps(parameters, -1))])
-		responses = poller.poll(timeout * 1000)
+		await socket.send_multipart([endpoint] + parameters)
+		responses = await poller.poll(timeout * 1000)
 
 		if len(responses) != 0:
-			[response] = socket.recv_multipart()
+			response = await socket.recv_multipart()
 			socket.close()
-			return pickle.loads(zlib.decompress(response))
+			return response
 		else:
 			socket.close()
 			raise Exception("time out")
 		return None
 
 	@staticmethod
-	def find_exchange(raw, platform, bias):
-		return TickerParser.execute_parser_request(b"find_exchange", (raw, platform, bias))
+	async def find_exchange(raw, platform, bias):
+		[success, exchange] = await TickerParser.execute_parser_request(b"find_exchange", [raw.encode(), platform.encode(), bias.encode()])
+		exchange = None if exchange == b"" else loads(exchange)
+		return bool(int(success)), exchange
 
 	@staticmethod
-	def process_known_tickers(ticker, exchange, platform, defaults, bias):
-		return TickerParser.execute_parser_request(b"process_known_tickers", (ticker, exchange, platform, defaults, bias))
+	async def match_ticker(tickerId, exchange, platform, bias):
+		exchangeId = exchange.get("id").lower() if bool(exchange) else ""
+		[ticker, error] = await TickerParser.execute_parser_request(b"match_ticker", [tickerId.encode(), exchangeId.encode(), platform.encode(), bias.encode()])
+		ticker = None if ticker == b"" else loads(ticker)
+		error = None if error == b"" else error.decode()
+		return ticker, error
 
 	@staticmethod
-	def find_ccxt_crypto_market(ticker, exchange, platform, defaults):
-		return TickerParser.execute_parser_request(b"find_ccxt_crypto_market", (ticker, exchange, platform, defaults))
+	async def check_if_fiat(tickerId):
+		[success, fiat] = await TickerParser.execute_parser_request(b"check_if_fiat", [tickerId.encode()])
+		fiat = None if fiat == b"" else fiat.decode()
+		return bool(int(success)), fiat
 
 	@staticmethod
-	def find_coingecko_crypto_market(ticker):
-		return TickerParser.execute_parser_request(b"find_coingecko_crypto_market", (ticker))
+	async def get_listings(tickerBase, tickerQuote):
+		[listings, total] = await TickerParser.execute_parser_request(b"get_listings", [tickerBase.encode(), tickerQuote.encode()])
+		return loads(listings), int(total)
 
 	@staticmethod
-	def find_iexc_market(ticker, exchange):
-		return TickerParser.execute_parser_request(b"find_iexc_market", (ticker, exchange))
+	async def get_formatted_price_ccxt(exchangeId, symbol, price):
+		[response] = await TickerParser.execute_parser_request(b"get_formatted_price_ccxt", [exchangeId.encode(), symbol.encode(), str(price).encode()])
+		return response.decode()
 
 	@staticmethod
-	def find_quandl_market(ticker):
-		return TickerParser.execute_parser_request(b"find_quandl_market", (ticker))
-
-	@staticmethod
-	def get_coingecko_image(base):
-		return TickerParser.execute_parser_request(b"get_coingecko_image", (base))
-
-	@staticmethod
-	def check_if_fiat(tickerId):
-		return TickerParser.execute_parser_request(b"check_if_fiat", (tickerId))
-
-	@staticmethod
-	def get_listings(ticker):
-		return TickerParser.execute_parser_request(b"get_listings", (ticker))
-
-	@staticmethod
-	def get_formatted_price(exchange, symbol, price):
-		return TickerParser.execute_parser_request(b"get_formatted_price", (exchange, symbol, price))
-
-	@staticmethod
-	def get_formatted_amount(exchange, symbol, price):
-		return TickerParser.execute_parser_request(b"get_formatted_amount", (exchange, symbol, price))
+	async def get_formatted_amount_ccxt(exchangeId, symbol, amount):
+		[response] = await TickerParser.execute_parser_request(b"get_formatted_amount_ccxt", [exchangeId.encode(), symbol.encode(), str(amount).encode()])
+		return response.decode()

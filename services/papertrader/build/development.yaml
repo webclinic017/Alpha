@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paper-trader-server-development
+  labels:
+    app: paper-trader-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: paper-trader-server
+  template:
+    metadata:
+      labels:
+        app: paper-trader-server
+    spec:
+      containers:
+      - name: paper-trader-server
+        image: alphabotsystem/alpha-paper-trader-server
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - name: alpha-service-keys
+            mountPath: /run/secrets/alpha-service
+            readOnly: true
+          - name: google-cloud-auth
+            mountPath: /run/secrets/google-cloud-auth
+            readOnly: true
+        ports:
+          - containerPort: 6906
+      volumes:
+        - name: alpha-service-keys
+          secret:
+            secretName: alpha-service-keys
+            items:
+              - key: credentials
+                path: key
+        - name: google-cloud-auth
+          secret:
+            secretName: google-cloud-auth
+            items:
+              - key: gcloud_credentials.json
+                path: key

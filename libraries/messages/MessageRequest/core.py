@@ -38,10 +38,7 @@ class MessageRequest(object):
 
 	def get_platform_order_for(self, commandType):
 		if commandType == "charts":
-			if self.marketBias == "traditional":
-				return [] + (self.accountProperties["settings"]["charts"]["preferredOrder"] if "settings" in self.accountProperties else ["TradingView", "Finviz", "Alternative.me", "Woobull Charts", "TradingLite", "GoCharting", "Bookmap"])
-			else:
-				return ["Alternative.me", "Woobull Charts"] + (self.accountProperties["settings"]["charts"]["preferredOrder"] if "settings" in self.accountProperties else ["TradingLite", "TradingView", "GoCharting", "Finviz", "Bookmap"])
+			return (self.accountProperties["settings"]["charts"]["preferredOrder"] if "settings" in self.accountProperties else ["TradingView", "GoCharting", "Finviz", "TradingLite", "Bookmap"]) + ["Alternative.me"]
 		elif commandType == "heatmaps":
 			if self.marketBias == "traditional":
 				return ["Finviz", "Bitgur"]
@@ -49,9 +46,9 @@ class MessageRequest(object):
 				return ["Bitgur", "Finviz"]
 		elif commandType == "quotes":
 			if self.marketBias == "traditional":
-				return ["IEXC", "Quandl", "Alternative.me", "LLD", "CoinGecko", "CCXT"]
+				return ["IEXC", "Alternative.me", "CoinGecko", "CCXT", "Serum", "LLD"]
 			else:
-				return ["Alternative.me", "LLD", "CoinGecko", "CCXT", "IEXC", "Quandl"]
+				return ["Alternative.me", "CoinGecko", "CCXT", "Serum", "IEXC", "LLD"]
 		elif commandType == "details":
 			if self.marketBias == "traditional":
 				return ["IEXC", "CoinGecko"]
@@ -152,22 +149,26 @@ class MessageRequest(object):
 				}
 			},
 			"settings": {
+				"assistant": {
+					"enabled": True
+				},
+				"channels": {
+					"public": None,
+					"private": None
+				},
+				"cope": {
+					"holding": [],
+					"voting": []
+				},
+				"messageProcessing": {
+					"bias": "traditional",
+					"autodelete": False,
+					"sentiment": True
+				},
 				"setup": {
 					"completed": False,
 					"connection": None,
 					"tos": 1.0
-				},
-				"charts": {
-					"defaults": {
-						"exchange": None
-					}
-				},
-				"assistant": {
-					"enabled": True
-				},
-				"messageProcessing": {
-					"bias": "traditional",
-					"autodelete": False
 				}
 			}
 		}

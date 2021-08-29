@@ -1,35 +1,21 @@
-import math
-import time
-import datetime
+from math import ceil
+from time import time
 
 
 class Utils(object):
 	@staticmethod
-	def num_of_decimal_places(exchange, price, precision):
-		if exchange.id in ["bitmex", "ftx"]:
-			s = str(precision)
-			if "e" in s: return int(s.split("e-")[1])
-			elif not '.' in s: return 0
-			else: return len(s) - s.index('.') - 1
-		elif exchange.id in ["bitfinex2"]:
-			return precision - len(str(int(price)))
-		else:
-			return precision
+	def generate_market_id(symbol, exchange):
+		symbolInfo = exchange.properties.markets[symbol]
+		marketPair = symbol.replace("-", "").split("/")
+		marketName1 = "".join(marketPair)
+		marketName2 = symbolInfo["id"].replace("_", "").replace("/", "").replace("-", "").upper()
+
+		if any(e in marketName2 for e in ["XBT"]) or exchange.id in ["bitmex"]: return marketName2
+		else: return marketName1
 
 	@staticmethod
 	def seconds_until_cycle():
-		return (time.time() + 60) // 60 * 60 - time.time()
-
-	@staticmethod
-	def get_highest_supported_timeframe(exchange, n):
-		if exchange.timeframes is None: return ("1m", int(exchange.milliseconds() / 1000) - 60, 2)
-		dailyOpen = (int(exchange.milliseconds() / 1000) - (n.second + n.minute * 60 + n.hour * 3600)) * 1000
-		rolling24h = (int(exchange.milliseconds() / 1000) - 86400) * 1000
-		availableTimeframes = ["5m", "10m", "15m", "20m", "30m", "1H", "2H", "3H", "4H", "6H", "8H", "12H", "1D"]
-		for tf in availableTimeframes:
-			if tf.lower() in exchange.timeframes:
-				return tf, min(rolling24h, dailyOpen), math.ceil(int((exchange.milliseconds() - dailyOpen) / 1000) / Utils.get_frequency_time(tf))
-		return ("1m", int(exchange.milliseconds() / 1000) - 60, 2)
+		return (time() + 60) // 60 * 60 - time()
 
 	@staticmethod
 	def get_accepted_timeframes(t):

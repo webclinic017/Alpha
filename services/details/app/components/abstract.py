@@ -1,0 +1,2 @@
+class  AbstractProvider(object):
+	pass

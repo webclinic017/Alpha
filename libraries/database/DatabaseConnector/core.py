@@ -1,41 +1,43 @@
-import os
-import zmq.asyncio
-import pickle
+from os import environ
+from time import time
+from zmq.asyncio import Context, Poller
+from zmq import REQ, LINGER, POLLIN
+from orjson import loads
 from io import BytesIO
 
 
 class DatabaseConnector(object):
-	zmqContext = zmq.asyncio.Context.instance()
+	zmqContext = Context.instance()
 
 	def __init__(self, mode):
 		self.mode = mode
 
 	@staticmethod
-	async def execute_parser_request(endpoint, parameters, timeout=0.5):
-		socket = DatabaseConnector.zmqContext.socket(zmq.REQ)
+	async def execute_database_request(endpoint, parameters, timeout=1):
+		socket = DatabaseConnector.zmqContext.socket(REQ)
 		payload, responseText = None, None
 		socket.connect("tcp://database:6900")
-		socket.setsockopt(zmq.LINGER, 0)
-		poller = zmq.asyncio.Poller()
-		poller.register(socket, zmq.POLLIN)
+		socket.setsockopt(LINGER, 0)
+		poller = Poller()
+		poller.register(socket, POLLIN)
 
-		await socket.send_multipart([endpoint, parameters])
+		await socket.send_multipart([endpoint, bytes(str(int((time() + timeout) * 1000)), encoding='utf8'), parameters])
 		responses = await poller.poll(timeout * 1000)
 
 		if len(responses) != 0:
 			[response] = await socket.recv_multipart()
 			socket.close()
-			return pickle.loads(response)
+			return loads(response)
 		else:
 			socket.close()
 		return None
 
 	async def check_status(self):
-		try: return await DatabaseConnector.execute_parser_request(bytes(self.mode + "_status", encoding='utf8'), b"")
+		try: return await DatabaseConnector.execute_database_request(bytes(self.mode + "_status", encoding='utf8'), b"")
 		except: return False
 
 	async def keys(self, default={}):
-		try: response = await DatabaseConnector.execute_parser_request(bytes(self.mode + "_keys", encoding='utf8'), b"", timeout=5.0)
+		try: response = await DatabaseConnector.execute_database_request(bytes(self.mode + "_keys", encoding='utf8'), b"", timeout=5.0)
 		except: return default
 
 		if response is None:
@@ -43,7 +45,7 @@ class DatabaseConnector(object):
 		return response
 
 	async def get(self, value, default=None):
-		try: response = await DatabaseConnector.execute_parser_request(bytes(self.mode + "_fetch", encoding='utf8'), bytes(str(value), encoding='utf8'))
+		try: response = await DatabaseConnector.execute_database_request(bytes(self.mode + "_fetch", encoding='utf8'), bytes(str(value), encoding='utf8'))
 		except: return default
 
 		if response is None:
@@ -51,7 +53,7 @@ class DatabaseConnector(object):
 		return response
 
 	async def match(self, value, default=None):
-		try: response = await DatabaseConnector.execute_parser_request(bytes(self.mode + "_match", encoding='utf8'), bytes(str(value), encoding='utf8'))
+		try: response = await DatabaseConnector.execute_database_request(bytes(self.mode + "_match", encoding='utf8'), bytes(str(value), encoding='utf8'))
 		except: return default
 
 		if response is None:

@@ -1,41 +1,34 @@
-import os
-import sys
+from os import environ
 from random import randint
-import argparse
-import time
-import datetime
-import uuid
-import pytz
-import urllib
-import copy
-import atexit
-import asyncio
-import zlib
-import pickle
-import concurrent
-import traceback
+from time import time
+from datetime import datetime
+from uuid import uuid4
+from pytz import utc
+from asyncio import CancelledError, InvalidStateError, TimeoutError, sleep, all_tasks, wait_for
+from traceback import format_exc
 
 import discord
-from google.cloud import firestore, error_reporting
+from google.cloud.firestore import AsyncClient as FirestoreAsnycClient
+from google.cloud.firestore import ArrayUnion, ArrayRemove
+from google.cloud.error_reporting import Client as ErrorReportingClient
 
 from Processor import Processor
 from DatabaseConnector import DatabaseConnector
 
+from MessageRequest import MessageRequest
 from helpers.utils import Utils
+from helpers import constants
 
 
-database = firestore.Client()
+database = FirestoreAsnycClient()
 
 
 class Alpha(discord.AutoShardedClient):
 	isBotReady = False
-	clientId = None
-	clientName = None
-
+	updatingNickname = False
 	timeOffset = 0
-	lastPing = 0
-	exponentialBakcoff = 0
 
+	accountProperties = DatabaseConnector(mode="account")
 	guildProperties = DatabaseConnector(mode="guild")
 
 	tickerId = None
@@ -45,179 +38,173 @@ class Alpha(discord.AutoShardedClient):
 
 
 	def prepare(self):
-		"""Prepares all required objects and fetches Alpha settings
-
-		"""
-
 		Processor.clientId = b"discord_satellite"
-		self.logging = error_reporting.Client(service="satellites")
-		self.timeOffset = randint(0, 120)
-
+		self.logging = ErrorReportingClient(service="satellites")
+		self.timeOffset = randint(0, 600) / 10.0
 		self.priceText = None
 
-		time.sleep(self.timeOffset)
-		self.clientName = str(uuid.uuid4())
-		self.get_assigned_id()
-		print("[Startup]: received task: {}/{}/{}".format(self.platform, self.exchange, self.tickerId))
-		print("[Startup]: parser initialization complete")
-
 	async def on_ready(self):
-		"""Initiates all Discord dependent functions and flags the bot as ready to process requests
-
-		"""
+		self.platform, self.exchange, self.tickerId = constants.configuration[client.user.id]
+		self.isFree = self.platform == "CoinGecko" and self.exchange is None and self.tickerId in ["BTCUSD", "ETHUSD"]
 
 		self.isBotReady = True
-
 		print("[Startup]: Alpha Satellite is online")
 
-	def get_assigned_id(self):
+	async def on_guild_remove(self, guild):
 		try:
-			currentSelectedId = self.clientId
-			tasks = database.collection("dataserver/configuration/satellites").get()
-			assignments = {doc.id: doc.to_dict() for doc in tasks}
+			guildProperties = await self.guildProperties.get(guild.id)
+			if guildProperties is None: return
 
-			if self.clientId is None or assignments[self.clientId]["uuid"] != self.clientName:
-				for clientId in assignments:
-					if currentSelectedId is None or assignments[clientId]["ping"] < assignments[currentSelectedId]["ping"]:
-						currentSelectedId = clientId
-
-			if os.environ["PRODUCTION_MODE"] and time.time() > self.lastPing:
-				database.document("dataserver/configuration/satellites/{}".format(currentSelectedId)).set({"ping": int(time.time()), "uuid": self.clientName}, merge=True)
-				self.lastPing = time.time() + 1 * 1.1 ** self.exponentialBakcoff
-				self.exponentialBakcoff += 1
-
-			if self.clientId is None or not self.isBotReady:
-				self.clientId = currentSelectedId
-				self.platform, self.exchange, self.tickerId = assignments[self.clientId]["task"]
-				self.isFree = self.tickerId in ["BTCUSD", "ETHUSD"] and self.platform == "CoinGecko"
-			elif self.clientId != currentSelectedId and os.environ["PRODUCTION_MODE"]:
-				self.isBotReady = False
-				self.clientId = currentSelectedId
-				self.platform, self.exchange, self.tickerId = assignments[self.clientId]["task"]
-				self.isFree = self.tickerId in ["BTCUSD", "ETHUSD"] and self.platform == "CoinGecko"
-				print("[Shutdown]: Task missmatch, shutting down")
-				os._exit(1)
-
+			if str(client.user.id) in guildProperties["addons"]["satellites"].get("added", []):
+				await database.document("discord/properties/guilds/{}".format(guild.id)).set({"addons": {"satellites": {"added": ArrayRemove([str(client.user.id)])}}}, merge=True)
 		except Exception:
-			print(traceback.format_exc())
-			if os.environ["PRODUCTION_MODE"]: self.logging.report_exception()
-
-	async def on_guild_join(self, guild):
-		"""Updates quild count on guild_join event and leaves all guilds flagged as banned
-
-		Parameters
-		----------
-		guild : discord.Guild
-			Guild object passed by discord.py
-		"""
-
-		try:
-			properties = await self.guildProperties.get(guild.id)
-			if properties is None:
-				return
-			elif not self.isFree and not properties["addons"]["satellites"]["enabled"]:
-				try: await guild.me.edit(nick="Disabled")
-				except: return
-			elif self.isFree or properties["addons"]["satellites"]["connection"] is not None:
-				try: await guild.me.edit(nick=self.priceText)
-				except: return
-			else:
-				try: await guild.me.edit(nick="Alpha Pro required")
-				except: return
-		except Exception:
-			print(traceback.format_exc())
-			if os.environ["PRODUCTION_MODE"]: self.logging.report_exception()
+			print(format_exc())
+			if environ["PRODUCTION_MODE"]: self.logging.report_exception(user=str(guild.id))
 
 	async def job_queue(self):
-		"""Updates Alpha Bot user status with latest prices
-
-		"""
-
 		while True:
 			try:
-				await asyncio.sleep(Utils.seconds_until_cycle())
-				if not await self.guildProperties.check_status(): continue
-				t = datetime.datetime.now().astimezone(pytz.utc)
+				await sleep(Utils.seconds_until_cycle())
+				t = datetime.now().astimezone(utc)
 				timeframes = Utils.get_accepted_timeframes(t)
 
 				isPremium = self.tickerId in ["EURUSD", "GBPUSD", "AUDJPY", "AUDUSD", "EURJPY", "GBPJPY", "NZDJPY", "NZDUSD", "CADUSD", "JPYUSD", "ZARUSD"]
-				refreshRate = "5m" if len(client.guilds) > 1 and (not isPremium or len(client.guilds) > 15) else "1H"
+				if len(client.guilds) == 1:
+					refreshRate = "8H"
+				elif isPremium and len(client.guilds) < 15:
+					refreshRate = "1H"
+				else:
+					refreshRate = "5m"
 
-				if "1m" in timeframes:
-					self.get_assigned_id()
-				if refreshRate in timeframes:
-					await asyncio.sleep(self.timeOffset)
+				if refreshRate in timeframes and not self.updatingNickname:
+					client.loop.create_task(self.update_nicknames())
+				if "1H" in timeframes:
+					client.loop.create_task(self.update_properties())
 
-					try: outputMessage, request = Processor.process_quote_arguments(client.user.id, [] if self.exchange is None else [self.exchange], tickerId=self.tickerId, platformQueue=[self.platform])
-					except: continue
-					if outputMessage is not None:
-						print(outputMessage)
-						if os.environ["PRODUCTION_MODE"]: self.logging.report(outputMessage)
-						continue
-
-					try: payload, quoteText = await Processor.execute_data_server_request("quote", request)
-					except: continue
-					if payload is None or "quotePrice" not in payload:
-						print("Requested price for `{}` is not available".format(request.get_ticker().name) if quoteText is None else quoteText)
-						continue
-
-					self.priceText = "{} {}".format(payload["quotePrice"], payload["quoteTicker"])
-					changeText = "" if "change" not in payload else "{:+.2f} % | ".format(payload["change"])
-					tickerText = "{} | ".format(request.get_ticker().id) if request.get_exchange() is None else "{} on {} | ".format(request.get_ticker().id, request.get_exchange().name)
-					statusText = "{}{}alphabotsystem.com".format(changeText, tickerText)
-					status = discord.Status.online if payload.get("change", 0) >= 0 else discord.Status.dnd
-
-					for guild in client.guilds:
-						properties = await self.guildProperties.get(guild.id)
-						if properties is None or not guild.me.guild_permissions.change_nickname:
-							continue
-						elif not self.isFree and not properties["addons"]["satellites"]["enabled"]:
-							if guild.me.nick != "Disabled":
-								try: await guild.me.edit(nick="Disabled")
-								except: pass
-						elif self.isFree or properties["addons"]["satellites"]["connection"] is not None:
-							if guild.me.nick != self.priceText:
-								try: await guild.me.edit(nick=self.priceText)
-								except: pass
-						else:
-							if guild.me.nick != "Alpha Pro required":
-								try: await guild.me.edit(nick="Alpha Pro required")
-								except: pass
-
-					try: await client.change_presence(status=status, activity=discord.Activity(type=discord.ActivityType.watching, name=statusText))
-					except: pass
-
-			except asyncio.CancelledError: return
+			except CancelledError: return
 			except Exception:
-				print(traceback.format_exc())
-				if os.environ["PRODUCTION_MODE"]: self.logging.report_exception()
+				print(format_exc())
+				if environ["PRODUCTION_MODE"]: self.logging.report_exception()
+
+	async def update_properties(self):
+		try:
+			satelliteRef = database.document("dataserver/configuration/satellites/{}".format(client.user.id))
+			properties = await satelliteRef.get()
+			properties = properties.to_dict()
+
+			guildIds = [str(e.id) for e in client.guilds]
+			for guildId in properties.get("servers", []):
+				if guildId not in guildIds:
+					await database.document("discord/properties/guilds/{}".format(guildId)).set({"addons": {"satellites": {"added": ArrayRemove([guildId])}}}, merge=True)
+
+			await satelliteRef.set({"count": len(guildIds), "servers": guildIds})
+		except CancelledError: return
+		except Exception:
+			print(format_exc())
+			if environ["PRODUCTION_MODE"]: self.logging.report_exception()
+
+	async def update_nicknames(self):
+		try:
+			self.updatingNickname = True
+			await sleep(self.timeOffset)
+
+			outputMessage, request = await Processor.process_quote_arguments(MessageRequest(), [] if self.exchange is None else [self.exchange], tickerId=self.tickerId, platformQueue=[self.platform])
+			if outputMessage is not None:
+				print(outputMessage)
+				return
+
+			try: payload, quoteText = await Processor.process_request("quote", client.user.id, request)
+			except: return
+			if payload is None or "quotePrice" not in payload:
+				print("Something wen't wrong when fetching the price:", quoteText)
+				return
+
+			currentRequest = request.get(payload.get("platform"))
+			ticker = currentRequest.get("ticker")
+
+			self.priceText = payload["quotePrice"]
+			changeText = "{} | ".format(payload["change"]) if "change" in payload else ""
+			tickerText = "{} | ".format(ticker.get("id")) if not bool(ticker.get("exchange")) else "{} on {} | ".format(ticker.get("id"), ticker.get("exchange").get("name"))
+			statusText = "{}{}alphabotsystem.com".format(changeText, tickerText)
+			status = discord.Status.dnd if payload.get("messageColor") == "red" else discord.Status.online
+
+			for guild in client.guilds:
+				if not guild.me.guild_permissions.change_nickname:
+					continue
+
+				if self.isFree:
+					await self.update_nickname(guild, self.priceText)
+
+				else:
+					guildProperties = await self.guildProperties.get(guild.id)
+					if guildProperties is None:
+						await sleep(0.5)
+						continue
+
+					connection = guildProperties.get("addons", {}).get("satellites", {}).get("connection", guildProperties.get("settings", {}).get("setup", {}).get("connection"))
+					accountProperties = await self.accountProperties.get(connection)
+					if accountProperties is None:
+						await sleep(0.5)
+						continue
+
+					if accountProperties.get("customer", {}).get("personalSubscription", {}).get("subscription") is not None:
+						if not guildProperties["addons"]["satellites"]["enabled"]:
+							await database.document("discord/properties/guilds/{}".format(guild.id)).set({"addons": {"satellites": {"enabled": True, "connection": connection}}}, merge=True)
+						if str(client.user.id) not in guildProperties["addons"]["satellites"].get("added", []):
+							await database.document("discord/properties/guilds/{}".format(guild.id)).set({"addons": {"satellites": {"added": ArrayUnion([str(client.user.id)])}}}, merge=True)
+						await self.update_nickname(guild, self.priceText)
+					else:
+						await self.update_nickname(guild, "Alpha Pro required")
+
+			try: await client.change_presence(status=status, activity=discord.Activity(type=discord.ActivityType.watching, name=statusText))
+			except: pass
+
+		except CancelledError: return
+		except Exception:
+			print(format_exc())
+			if environ["PRODUCTION_MODE"]: self.logging.report_exception()
+		finally:
+			self.updatingNickname = False
+
+	async def update_nickname(self, guild, nickname):
+		if guild.me.nick != nickname:
+			try: await guild.me.edit(nick=nickname)
+			except: pass
+		else:
+			await sleep(0.5)
 
 
 # -------------------------
 # Initialization
 # -------------------------
 
-def handle_exit():
+def handle_exit(sleepDuration=0):
 	print("\n[Shutdown]: closing tasks")
-	client.loop.run_until_complete(client.close())
-	for t in asyncio.all_tasks(loop=client.loop):
+	try: client.loop.run_until_complete(client.close())
+	except: pass
+	for t in all_tasks(loop=client.loop):
 		if t.done():
 			try: t.exception()
-			except asyncio.InvalidStateError: pass
-			except asyncio.TimeoutError: pass
-			except asyncio.CancelledError: pass
+			except InvalidStateError: pass
+			except TimeoutError: pass
+			except CancelledError: pass
 			continue
 		t.cancel()
 		try:
-			client.loop.run_until_complete(asyncio.wait_for(t, 5, loop=client.loop))
+			client.loop.run_until_complete(wait_for(t, 5, loop=client.loop))
 			t.exception()
-		except asyncio.InvalidStateError: pass
-		except asyncio.TimeoutError: pass
-		except asyncio.CancelledError: pass
+		except InvalidStateError: pass
+		except TimeoutError: pass
+		except CancelledError: pass
+	from time import sleep as ssleep
+	ssleep(sleepDuration)
 
 if __name__ == "__main__":
-	os.environ["PRODUCTION_MODE"] = os.environ["PRODUCTION_MODE"] if "PRODUCTION_MODE" in os.environ and os.environ["PRODUCTION_MODE"] else ""
-	print("[Startup]: Alpha Satellite is in startup, running in {} mode.".format("production" if os.environ["PRODUCTION_MODE"] else "development"))
+	environ["PRODUCTION_MODE"] = environ["PRODUCTION_MODE"] if "PRODUCTION_MODE" in environ and environ["PRODUCTION_MODE"] else ""
+	print("[Startup]: Alpha Satellite is in startup, running in {} mode.".format("production" if environ["PRODUCTION_MODE"] else "development"))
+	print(environ["HOSTNAME"])
+	satelliteId = 0 if len(environ["HOSTNAME"].split("-")) == 1 else int(environ["HOSTNAME"].split("-")[-1])
+	if not environ.get("IS_FREE"): satelliteId += 2
 
 	intents = discord.Intents.none()
 	intents.guilds = True
@@ -229,14 +216,14 @@ if __name__ == "__main__":
 	while True:
 		client.loop.create_task(client.job_queue())
 		try:
-			token = os.environ["ID_{}".format(client.clientId)]
+			token = environ["ID_{}".format(constants.satellites[satelliteId])]
 			client.loop.run_until_complete(client.start(token))
 		except (KeyboardInterrupt, SystemExit):
 			handle_exit()
 			client.loop.close()
 			break
 		except Exception:
-			print(traceback.format_exc())
-			handle_exit()
+			print(format_exc())
+			handle_exit(sleepDuration=900)
 
 		client = Alpha(loop=client.loop, intents=intents, status=discord.Status.idle, activity=None)

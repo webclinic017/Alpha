@@ -20,22 +20,26 @@ class Utils(object):
 				}
 			},
 			"settings": {
+				"assistant": {
+					"enabled": True
+				},
+				"channels": {
+					"public": None,
+					"private": None
+				},
+				"cope": {
+					"holding": [],
+					"voting": []
+				},
+				"messageProcessing": {
+					"bias": "traditional",
+					"autodelete": False,
+					"sentiment": True
+				},
 				"setup": {
 					"completed": False,
 					"connection": None,
 					"tos": 1.0
-				},
-				"charts": {
-					"defaults": {
-						"exchange": None
-					}
-				},
-				"assistant": {
-					"enabled": True
-				},
-				"messageProcessing": {
-					"bias": "traditional",
-					"autodelete": False
 				}
 			}
 		}

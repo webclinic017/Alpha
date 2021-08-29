@@ -1,14 +1,16 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: database
   labels:
     app: database
 spec:
-  replicas: 3
+  replicas: 8
   selector:
     matchLabels:
       app: database
+  serviceName: "database"
+  podManagementPolicy: Parallel
   template:
     metadata:
       labels:
@@ -22,16 +24,25 @@ spec:
           - name: PRODUCTION_MODE
             value: "1"
         volumeMounts:
+          - name: alpha-service-keys
+            mountPath: /run/secrets/alpha-service
+            readOnly: true
           - name: google-cloud-auth
             mountPath: /run/secrets/google-cloud-auth
             readOnly: true
         resources:
           requests:
-            memory: "250Mi"
-            cpu: "75m"
+            memory: "370Mi"
+            cpu: "50m"
         ports:
           - containerPort: 6900
       volumes:
+        - name: alpha-service-keys
+          secret:
+            secretName: alpha-service-keys
+            items:
+              - key: credentials
+                path: key
         - name: google-cloud-auth
           secret:
             secretName: google-cloud-auth
